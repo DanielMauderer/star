@@ -7,3 +7,7 @@ edition = "2021"
 rand = { version = "0.8.5" }
 rand_distr = "0.4.3"
 ocl = "0.19"
+ocl-extras = "0.1.1"
+turborand = "0.10.1"
+tokio = "1.40.0"
+futures = "0.3.30"

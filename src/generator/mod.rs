@@ -15,6 +15,7 @@ pub mod simd {
 
     use crate::{GALAXY_HEIGHT, GALAXY_RADIUS, NUM_POINTS};
 
+    #[allow(dead_code)]
     pub fn run() -> Duration {
         let mut polar_points_x = vec![f32x64::splat(0.); NUM_POINTS / 64];
         let mut polar_points_y = vec![f32x64::splat(0.); NUM_POINTS / 64];
@@ -127,6 +128,7 @@ pub mod unoptimized {
     use crate::{GALAXY_HEIGHT, GALAXY_RADIUS, NUM_POINTS};
 
     // per run 2.8 s for 100_000_000 points
+    #[allow(dead_code)]
     pub fn run() -> Duration {
         let now = Instant::now();
         let mut polar_points = vec![(0., 0., 0.); NUM_POINTS];
@@ -164,36 +166,111 @@ pub mod unoptimized {
 }
 
 pub mod gpu {
-    use ocl::ProQue;
+    use crate::{GALAXY_HEIGHT, GALAXY_RADIUS, NUM_POINTS};
+    use ocl::{Buffer, ProQue};
+    use std::{io::Write, time::Instant};
+    use turborand::prelude::*;
 
     extern crate ocl;
+    extern crate ocl_extras;
 
-    pub fn run() -> ocl::Result<std::time::Duration> {
+    pub async fn run() -> ocl::Result<std::time::Duration> {
         let duration = std::time::Instant::now();
-        let src = r#"
-        __kernel void add(__global float* buffer, float scalar) {
-            buffer[get_global_id(0)] += scalar;
+        let src = include_str!("generate_x.cl");
+
+        let pro_que = ProQue::builder().src(src).dims(NUM_POINTS).build()?;
+
+        println!("{:?} - Creating a source buffer...", duration.elapsed());
+
+        let mut points: Vec<f32> = vec![0.0; NUM_POINTS * 3];
+        let file = std::fs::File::create("points.txt")?;
+        let mut writer = std::io::BufWriter::new(file);
+        let mut start = duration.elapsed();
+        start = duration.elapsed() - start;
+        fill_points(&pro_que, &mut points, &duration)?;
+
+        for i in 0..10 {
+            println!(
+                "t: {:?}/ i: {:?} Iteration: {} - Done filling points...",
+                duration.elapsed(),
+                start,
+                i
+            );
+
+            let write_job = write_batch_to_file(&mut writer, points.clone());
+
+            println!("{:?} - Done writing results...", duration.elapsed());
+            fill_points(&pro_que, &mut points, &duration)?;
+            write_job.await?;
+            println!(
+                "t: {:?}/ i: {:?} Iteration: {} - Done writing points...",
+                duration.elapsed(),
+                start,
+                i
+            );
         }
-    "#;
 
-        let pro_que = ProQue::builder().src(src).dims(1 << 20).build()?;
+        println!("{:?} - all done", duration.elapsed());
+        Ok(duration.elapsed())
+    }
 
-        let buffer = pro_que.create_buffer::<f32>()?;
+    fn fill_points(
+        pro_que: &ProQue,
+        result_source: &mut Vec<f32>,
+        duration: &Instant,
+    ) -> ocl::Result<()> {
+        println!("(x): {:?} - Creating GPU buffers...", duration.elapsed());
+
+        let rand = Rng::new();
+        let seed_count = NUM_POINTS / 100;
+        let mut seed_source = vec![0i64; seed_count];
+
+        for i in 0..seed_count {
+            seed_source[i] = rand.gen_i64();
+        }
+
+        let seed_buffer: Buffer<i64> = unsafe {
+            Buffer::<i64>::builder()
+                .queue(pro_que.queue().clone())
+                .len(seed_count)
+                .use_host_slice(&seed_source)
+                .build()
+        }?;
+
+        let result_buffer: Buffer<f32> = Buffer::<f32>::builder()
+            .queue(pro_que.queue().clone())
+            .len(NUM_POINTS * 3)
+            .fill_val(Default::default())
+            .build()?;
+
+        println!("(x): {:?} - Creating kernel...", duration.elapsed());
 
         let kernel = pro_que
-            .kernel_builder("add")
-            .arg(&buffer)
-            .arg(10.0f32)
+            .kernel_builder("generate_points")
+            .global_work_size(NUM_POINTS)
+            .arg(&seed_buffer)
+            .arg(&result_buffer)
+            .arg(GALAXY_HEIGHT)
+            .arg(GALAXY_RADIUS)
             .build()?;
+        println!("(x): {:?} - Enqueueing kernel...", duration.elapsed());
 
         unsafe {
             kernel.enq()?;
         }
+        println!("(x): {:?} - Reading results...", duration.elapsed());
+        result_buffer.read(result_source).enq()?;
+        Ok(())
+    }
 
-        let mut vec = vec![0.0f32; buffer.len()];
-        buffer.read(&mut vec).enq()?;
-
-        println!("The value at index [{}] is now '{}'!", 200007, vec[200007]);
-        Ok(duration.elapsed())
+    async fn write_batch_to_file(
+        writer: &mut std::io::BufWriter<std::fs::File>,
+        points: Vec<f32>,
+    ) -> std::io::Result<()> {
+        for j in 0..NUM_POINTS {
+            writer.write_all(&points[j].to_ne_bytes())?;
+        }
+        writer.flush()?;
+        Ok(())
     }
 }
