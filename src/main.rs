@@ -1,11 +1,11 @@
 #![feature(portable_simd)]
 
 use futures::executor::block_on;
-use generator::{gpu, simd, unoptimized};
+use generator::{gpu, sequ, simd};
 
 const GALAXY_RADIUS: f32 = 1. / 30003.2615637769;
 const GALAXY_HEIGHT: f32 = 1. / 2503.2615637769;
-const NUM_POINTS: usize = 500_000_000;
+const NUM_POINTS: usize = 100_000_000;
 mod generator;
 
 fn main() {
@@ -21,6 +21,7 @@ fn main() {
 
     let done = simd::run();
     println!("simd processing time: {:?}", done);
-    let done = unoptimized::run();
+
+    let done = sequ::run();
     println!("unoptimized processing time: {:?}", done);
 }
