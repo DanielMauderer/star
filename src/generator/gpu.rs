@@ -1,6 +1,6 @@
 use crate::{GALAXY_HEIGHT, GALAXY_RADIUS, NUM_POINTS};
 use ocl::{Buffer, ProQue};
-use std::{io::Write, time::Instant};
+use std::time::Instant;
 use turborand::prelude::*;
 
 extern crate ocl;
@@ -66,16 +66,5 @@ fn fill_points(
     }
     println!("(x): {:?} - Reading results...", duration.elapsed());
     result_buffer.read(result_source).enq()?;
-    Ok(())
-}
-
-async fn write_batch_to_file(
-    writer: &mut std::io::BufWriter<std::fs::File>,
-    points: Vec<f32>,
-) -> std::io::Result<()> {
-    for j in 0..NUM_POINTS {
-        writer.write_all(&points[j].to_ne_bytes())?;
-    }
-    writer.flush()?;
     Ok(())
 }
